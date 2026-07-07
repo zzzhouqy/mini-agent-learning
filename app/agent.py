@@ -1,8 +1,10 @@
-import json
+from pydantic import ValidationError
 from app.utils import add
+from app.csv_tool import get_csv_row
 import httpx
 # 合并导入，只写一次
 from app.config import ConfigError, LLMConfig
+from app.schemas import AddArguments, CsvRowArguments
 
 TOOLS = [
     {
@@ -10,25 +12,26 @@ TOOLS = [
         "function": {
             "name": "add",
             "description": "计算两个整数的和",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "a": {
-                        "type": "integer",
-                        "description": "第一个整数",
-                    },
-                    "b": {
-                        "type": "integer",
-                        "description": "第二个整数",
-                    },
-                },
-                "required": ["a", "b"],
-            },
+            "parameters": AddArguments.model_json_schema(),
         },
-    }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_csv_row",
+            "description": "读取固定 CSV 文件中指定行的数据",
+            "parameters": CsvRowArguments.model_json_schema(),
+        },
+    },
 ]
 TOOL_HANDLERS = {
     "add": add,
+    "get_csv_row": get_csv_row,
+}
+
+TOOL_SCHEMAS = {
+    "add": AddArguments,
+    "get_csv_row": CsvRowArguments,
 }
 class AgentError(RuntimeError):
     """Agent执行失败。"""
@@ -63,15 +66,55 @@ def send_messages(config: LLMConfig, messages: list[dict]) -> dict:
         return response.json()["choices"][0]["message"]
     except (ValueError, KeyError, IndexError, TypeError) as exc:
         raise AgentError("模型返回了无法解析的响应") from exc
+def execute_tool(
+    tool_name: str,
+    arguments_text: str,
+) -> tuple[dict | str, object, bool]:
+    handler = TOOL_HANDLERS.get(tool_name)
+    schema = TOOL_SCHEMAS.get(tool_name)
+
+    if handler is None or schema is None:
+        return {}, f"Error: 未知工具 {tool_name}", False
+
+    try:
+        validated_arguments = schema.model_validate_json(
+            arguments_text
+        )
+    except ValidationError as exc:
+        return (
+            arguments_text,
+            "Error: 参数校验失败："
+            f"{exc.errors(include_url=False)}",
+            True,
+        )
+
+    arguments = validated_arguments.model_dump()
+
+    try:
+        result = handler(**arguments)
+    except (
+        FileNotFoundError,
+        IndexError,
+        ValueError,
+        UnicodeError,
+    ) as exc:
+        return (
+            arguments,
+            f"Error: 工具执行失败：{exc}",
+            False,
+        )
+
+    return arguments, result, False
 
 
 def agent_loop(
     query: str,
     config: LLMConfig,
     max_steps: int = 5,
+    max_validation_retries: int = 2,
 ) -> None:
     messages = [{"role": "user", "content": query}]
-
+    validation_failures = 0
     for step in range(1, max_steps + 1):
         print(f"\n第 {step} 轮")
 
@@ -88,19 +131,32 @@ def agent_loop(
         # 执行本轮的所有工具
         for tool_call in tool_calls:
             tool_name = tool_call["function"]["name"]
-            arguments = json.loads(
-                tool_call["function"]["arguments"]
-            )
+            arguments_text = tool_call["function"]["arguments"]
 
-            handler = TOOL_HANDLERS.get(tool_name)
-            if handler is None:
-                result = f"Error: 未知工具 {tool_name}"
-            else:
-                result = handler(**arguments)
+            arguments, result,validation_failed = execute_tool(
+                tool_name,
+                arguments_text,
+            )
 
             print(f"调用工具：{tool_name}{arguments}")
             print(f"执行结果：{result}")
+            if validation_failed:
+                validation_failures += 1
 
+                if validation_failures > max_validation_retries:
+                    print(
+                        f"参数校验连续失败，"
+                        f"已用完 {max_validation_retries} 次重试。"
+                    )
+                    return
+
+                print(
+                    f"将错误反馈给模型，准备进行第 "
+                    f"{validation_failures}/"
+                    f"{max_validation_retries} 次重试。"
+                )
+            else:
+                validation_failures = 0
             messages.append(
                 {
                     "role": "tool",
@@ -108,9 +164,6 @@ def agent_loop(
                     "content": str(result),
                 }
             )
-
-    print(f"达到最大执行轮数 {max_steps}，任务停止。")
-
 
 def main() -> None:
     try:
