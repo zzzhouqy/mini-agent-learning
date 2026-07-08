@@ -35,12 +35,18 @@ TOOL_SCHEMAS = {
 }
 class AgentError(RuntimeError):
     """Agent执行失败。"""
-def send_messages(config: LLMConfig, messages: list[dict]) -> dict:
+def send_messages(
+    config: LLMConfig,
+    messages: list[dict],
+    tools: list[dict] | None = None,
+) -> dict:
     payload = {
         "model": config.model,
         "messages": messages,
-        "tools": TOOLS,
     }
+
+    if tools is not None:
+        payload["tools"] = tools
 
     # 第一层 try：捕获网络/HTTP 请求异常
     try:
@@ -118,7 +124,7 @@ def agent_loop(
     for step in range(1, max_steps + 1):
         print(f"\n第 {step} 轮")
 
-        message = send_messages(config, messages)
+        message = send_messages(config, messages, tools=TOOLS)
         messages.append(message)
 
         tool_calls = message.get("tool_calls")
