@@ -36,7 +36,7 @@ def split_paragraphs(text: str) -> list[str]:
     return chunks
 
 
-def build_context(chunk: str) -> dict[str, str]:
+def build_context(chunk: str, score: int = 0) -> dict[str, str]:
     lines = chunk.splitlines()
     title = lines[0].lstrip("# ").strip()
     content = "\n".join(lines[1:]).strip()
@@ -45,20 +45,40 @@ def build_context(chunk: str) -> dict[str, str]:
         "source": "data/knowledge.md",
         "title": title,
         "content": content,
+        "score": str(score),
     }
 
+
+def score_chunk(chunk: str, keywords: list[str]) -> int:
+    chunk_lower = chunk.lower()
+    score = 0
+
+    for keyword in keywords:
+        if keyword in chunk_lower:
+            score += 1
+
+    return score
 def search_knowledge(query: str, top_k: int = 3) -> list[dict[str, str]]:
     knowledge_text = load_knowledge()
     chunks = split_paragraphs(knowledge_text)
     keywords = query.lower().split()
 
-    results = []
+    scored_results = []
     for chunk in chunks:
-        chunk_lower = chunk.lower()
-        if any(keyword in chunk_lower for keyword in keywords):
-            results.append(build_context(chunk))
+        score = score_chunk(chunk, keywords)
+        if score > 0:
+            scored_results.append((score, build_context(chunk, score)))
 
-    return results[:top_k]
+    scored_results.sort(
+        key=lambda item: item[0],
+        reverse=True,
+    )
+
+    results = []
+    for _, context in scored_results[:top_k]:
+        results.append(context)
+
+    return results
 
 
 def format_contexts(contexts: list[dict[str, str]]) -> str:

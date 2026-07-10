@@ -1,4 +1,4 @@
-from app.rag import format_contexts, search_knowledge
+from app.rag import format_contexts, score_chunk, search_knowledge
 
 
 def test_search_knowledge_returns_structured_context():
@@ -18,3 +18,19 @@ def test_search_knowledge_returns_empty_list_when_not_found():
 
 def test_format_contexts_returns_message_when_empty():
     assert format_contexts([]) == "没有检索到相关资料。"
+
+
+def test_score_chunk_counts_keyword_hits():
+    score = score_chunk(
+        "Pydantic 会抛出 ValidationError",
+        ["pydantic", "validationerror", "天气"],
+    )
+
+    assert score == 2
+
+
+def test_search_knowledge_orders_results_by_score():
+    results = search_knowledge("Pydantic ValidationError")
+
+    assert results[0]["title"] == "Pydantic"
+    assert results[0]["score"] == "2"
