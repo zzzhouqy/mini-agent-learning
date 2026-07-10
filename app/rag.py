@@ -36,27 +36,45 @@ def split_paragraphs(text: str) -> list[str]:
     return chunks
 
 
-def search_knowledge(query: str, top_k: int = 3) -> list[str]:
+def build_context(chunk: str) -> dict[str, str]:
+    lines = chunk.splitlines()
+    title = lines[0].lstrip("# ").strip()
+    content = "\n".join(lines[1:]).strip()
+
+    return {
+        "source": "data/knowledge.md",
+        "title": title,
+        "content": content,
+    }
+
+def search_knowledge(query: str, top_k: int = 3) -> list[dict[str, str]]:
     knowledge_text = load_knowledge()
-    paragraphs = split_paragraphs(knowledge_text)
+    chunks = split_paragraphs(knowledge_text)
     keywords = query.lower().split()
 
     results = []
-    for paragraph in paragraphs:
-        paragraph_lower = paragraph.lower()
-        if any(keyword in paragraph_lower for keyword in keywords):
-            results.append(paragraph)
+    for chunk in chunks:
+        chunk_lower = chunk.lower()
+        if any(keyword in chunk_lower for keyword in keywords):
+            results.append(build_context(chunk))
 
     return results[:top_k]
 
 
-def format_contexts(contexts: list[str]) -> str:
+def format_contexts(contexts: list[dict[str, str]]) -> str:
     if not contexts:
         return "没有检索到相关资料。"
 
     formatted_contexts = []
     for index, context in enumerate(contexts, start=1):
-        formatted_contexts.append(f"[资料 {index}]\n{context}")
+        formatted_contexts.append(
+            (
+                f"[资料 {index}]\n"
+                f"来源：{context['source']}\n"
+                f"标题：{context['title']}\n"
+                f"内容：\n{context['content']}"
+            )
+        )
 
     return "\n\n".join(formatted_contexts)
 
@@ -73,6 +91,7 @@ def build_rag_messages(question: str) -> list[dict]:
                 "你只能基于用户提供的资料回答问题。"
                 "如果资料不足，请回答：资料不足，无法基于本地知识库回答。"
                 "不要编造资料中不存在的信息。"
+                "如果资料中包含来源和标题，请在回答末尾用“依据：”列出来源和标题。"
             ),
         },
         {
