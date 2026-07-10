@@ -3,7 +3,7 @@ from app.agent import send_messages
 from app.config import LLMConfig
 
 KNOWLEDGE_PATH = Path(__file__).resolve().parent.parent / "data" / "knowledge.md"
-
+KNOWLEDGE_DIR = Path(__file__).resolve().parent.parent / "data" / "knowledge"
 
 def load_knowledge() -> str:
     if not KNOWLEDGE_PATH.exists():
@@ -12,6 +12,24 @@ def load_knowledge() -> str:
         )
     return KNOWLEDGE_PATH.read_text(encoding="utf-8")
 
+
+
+def load_documents() -> list[dict[str, str]]:
+    if not KNOWLEDGE_DIR.exists():
+        raise FileNotFoundError(
+            f"知识库目录不存在：{KNOWLEDGE_DIR}"
+        )
+
+    documents = []
+    for path in sorted(KNOWLEDGE_DIR.glob("*.md")):
+        documents.append(
+            {
+                "source": str(path.relative_to(KNOWLEDGE_DIR.parent.parent)),
+                "text": path.read_text(encoding="utf-8"),
+            }
+        )
+
+    return documents
 def split_paragraphs(text: str) -> list[str]:
     chunks = []
     current_chunk = []
@@ -48,7 +66,21 @@ def build_context(chunk: str, score: int = 0) -> dict[str, str]:
         "score": str(score),
     }
 
+def build_context_from_document(
+    document: dict[str, str],
+    chunk: str,
+    score: int = 0,
+) -> dict[str, str]:
+    document_lines = document["text"].splitlines()
+    title = document_lines[0].lstrip("# ").strip()
+    content = chunk.strip()
 
+    return {
+        "source": document["source"],
+        "title": title,
+        "content": content,
+        "score": str(score),
+    }
 def score_chunk(chunk: str, keywords: list[str]) -> int:
     chunk_lower = chunk.lower()
     score = 0
@@ -59,15 +91,25 @@ def score_chunk(chunk: str, keywords: list[str]) -> int:
 
     return score
 def search_knowledge(query: str, top_k: int = 3) -> list[dict[str, str]]:
-    knowledge_text = load_knowledge()
-    chunks = split_paragraphs(knowledge_text)
+    documents = load_documents()
     keywords = query.lower().split()
 
     scored_results = []
-    for chunk in chunks:
-        score = score_chunk(chunk, keywords)
-        if score > 0:
-            scored_results.append((score, build_context(chunk, score)))
+    for document in documents:
+        chunks = split_paragraphs(document["text"])
+        for chunk in chunks:
+            score = score_chunk(chunk, keywords)
+            if score > 0:
+                scored_results.append(
+                    (
+                        score,
+                        build_context_from_document(
+                            document,
+                            chunk,
+                            score,
+                        ),
+                    )
+                )
 
     scored_results.sort(
         key=lambda item: item[0],
