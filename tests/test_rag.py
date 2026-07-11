@@ -1,4 +1,9 @@
-from app.rag import format_contexts, score_chunk, search_knowledge
+from app.rag import (
+    format_contexts,
+    score_chunk,
+    search_knowledge,
+    semantic_search_knowledge,
+)
 
 
 def test_search_knowledge_returns_structured_context():
@@ -43,3 +48,25 @@ def test_search_knowledge_returns_csv_tool_source():
     assert results[0]["source"] == "data/knowledge/csv_tool.md"
     assert results[0]["title"] == "CSV Tool"
     assert results[0]["score"] == "3"
+def test_semantic_search_orders_and_filters_results(monkeypatch):
+    def fake_semantic_scores(query: str, texts: list[str]) -> list[float]:
+        assert query == "如何校验工具参数"
+
+        return [
+            0.9 if text.startswith("Pydantic\n")
+            else 0.3 if text.startswith("Agent Loop\n")
+            else 0.1
+            for text in texts
+        ]
+
+    monkeypatch.setattr(
+        "app.rag.semantic_scores",
+        fake_semantic_scores,
+    )
+
+    results = semantic_search_knowledge("如何校验工具参数")
+
+    assert [result["title"] for result in results] == [
+        "Pydantic",
+        "Agent Loop",
+    ]

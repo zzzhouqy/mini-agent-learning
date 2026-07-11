@@ -1,6 +1,7 @@
 from pathlib import Path
 from app.agent import send_messages
 from app.config import LLMConfig
+from app.embeddings import semantic_scores
 
 KNOWLEDGE_PATH = Path(__file__).resolve().parent.parent / "data" / "knowledge.md"
 KNOWLEDGE_DIR = Path(__file__).resolve().parent.parent / "data" / "knowledge"
@@ -122,7 +123,43 @@ def search_knowledge(query: str, top_k: int = 3) -> list[dict[str, str]]:
 
     return results
 
+def semantic_search_knowledge(
+    query: str,
+    top_k: int = 3,
+    min_score: float = 0.2,
+) -> list[dict[str, str]]:
+    candidates = []
 
+    for document in load_documents():
+        for chunk in split_paragraphs(document["text"]):
+            candidates.append(
+                build_context_from_document(document, chunk)
+            )
+
+    if not candidates:
+        return []
+
+    texts = [
+        f"{context['title']}\n{context['content']}"
+        for context in candidates
+    ]
+    scores = semantic_scores(query, texts)
+
+    scored_results = []
+    for score, context in zip(scores, candidates):
+        if score >= min_score:
+            context["score"] = str(score)
+            scored_results.append((score, context))
+
+    scored_results.sort(
+        key=lambda item: item[0],
+        reverse=True,
+    )
+
+    return [
+        context
+        for _, context in scored_results[:top_k]
+    ]
 def format_contexts(contexts: list[dict[str, str]]) -> str:
     if not contexts:
         return "没有检索到相关资料。"
@@ -142,7 +179,7 @@ def format_contexts(contexts: list[dict[str, str]]) -> str:
 
 
 def build_rag_messages(question: str) -> list[dict]:
-    contexts = search_knowledge(question)
+    contexts = semantic_search_knowledge(question)
     context_text = format_contexts(contexts)
 
     return [
