@@ -1,8 +1,14 @@
+import pytest
+
 from app.rag import (
     format_contexts,
     score_chunk,
     search_knowledge,
     semantic_search_knowledge,
+    reciprocal_rank_score,
+    fuse_ranked_results,
+    hybrid_search_knowledge,
+    answer_with_context,
 )
 
 
@@ -70,3 +76,120 @@ def test_semantic_search_orders_and_filters_results(monkeypatch):
         "Pydantic",
         "Agent Loop",
     ]
+
+
+def test_reciprocal_rank_score_decreases_by_rank():
+    first_score = reciprocal_rank_score(1)
+    second_score = reciprocal_rank_score(2)
+
+    assert first_score == pytest.approx(1 / 61)
+    assert first_score > second_score
+
+
+def test_reciprocal_rank_score_rejects_zero_rank():
+    with pytest.raises(
+        ValueError,
+        match="rank 必须从 1 开始",
+    ):
+        reciprocal_rank_score(0)
+
+
+def test_fuse_ranked_results_orders_and_deduplicates():
+    def make_context(title: str) -> dict[str, str]:
+        return {
+            "source": f"data/{title}.md",
+            "title": title,
+            "content": f"{title} 内容",
+            "score": "original",
+        }
+
+    keyword_results = [
+        make_context("A"),
+        make_context("B"),
+        make_context("C"),
+    ]
+    semantic_results = [
+        make_context("B"),
+        make_context("C"),
+    ]
+
+    results = fuse_ranked_results(
+        [keyword_results, semantic_results],
+        top_k=2,
+    )
+
+    assert [result["title"] for result in results] == ["B", "C"]
+    assert len(results) == 2
+    assert float(results[0]["score"]) == pytest.approx(
+        1 / 62 + 1 / 61
+    )
+
+
+def test_hybrid_search_fuses_keyword_and_semantic_results(monkeypatch):
+    def make_context(title: str) -> dict[str, str]:
+        return {
+            "source": f"data/{title}.md",
+            "title": title,
+            "content": f"{title} 内容",
+            "score": "original",
+        }
+
+    def fake_keyword_search(query: str, top_k: int):
+        assert query == "测试问题"
+        assert top_k == 5
+        return [make_context("A"), make_context("B")]
+
+    def fake_semantic_search(
+        query: str,
+        top_k: int,
+        min_score: float,
+    ):
+        assert query == "测试问题"
+        assert top_k == 5
+        assert min_score == 0.4
+        return [make_context("B"), make_context("C")]
+
+    monkeypatch.setattr(
+        "app.rag.search_knowledge",
+        fake_keyword_search,
+    )
+    monkeypatch.setattr(
+        "app.rag.semantic_search_knowledge",
+        fake_semantic_search,
+    )
+
+    results = hybrid_search_knowledge(
+        "测试问题",
+        top_k=2,
+        candidate_k=5,
+        min_semantic_score=0.4,
+    )
+
+    assert [result["title"] for result in results] == ["B", "A"]
+
+
+def test_answer_with_context_uses_hybrid_search(monkeypatch):
+    expected_contexts = [
+        {
+            "source": "data/test.md",
+            "title": "测试资料",
+            "content": "测试内容",
+            "score": "0.03",
+        }
+    ]
+
+    def fake_hybrid_search(query: str):
+        assert query == "测试问题"
+        return expected_contexts
+
+    monkeypatch.setattr(
+        "app.rag.hybrid_search_knowledge",
+        fake_hybrid_search,
+    )
+
+    result = answer_with_context("测试问题")
+
+    assert result == {
+        "question": "测试问题",
+        "contexts": expected_contexts,
+    }

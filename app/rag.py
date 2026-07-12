@@ -91,6 +91,52 @@ def score_chunk(chunk: str, keywords: list[str]) -> int:
             score += 1
 
     return score
+
+
+def reciprocal_rank_score(rank: int, k: int = 60) -> float:
+    if rank < 1:
+        raise ValueError("rank 必须从 1 开始。")
+
+    return 1 / (k + rank)
+
+
+def context_key(context: dict[str, str]) -> tuple[str, str]:
+    return context["source"], context["content"]
+
+
+def fuse_ranked_results(
+    ranked_result_lists: list[list[dict[str, str]]],
+    top_k: int = 3,
+    k: int = 60,
+) -> list[dict[str, str]]:
+    contexts_by_key = {}
+    scores_by_key = {}
+
+    for results in ranked_result_lists:
+        for rank, context in enumerate(results, start=1):
+            key = context_key(context)
+
+            if key not in contexts_by_key:
+                contexts_by_key[key] = context.copy()
+                scores_by_key[key] = 0.0
+
+            scores_by_key[key] += reciprocal_rank_score(rank, k)
+
+    ranked_keys = sorted(
+        scores_by_key,
+        key=lambda key: scores_by_key[key],
+        reverse=True,
+    )
+
+    fused_results = []
+    for key in ranked_keys[:top_k]:
+        context = contexts_by_key[key]
+        context["score"] = str(scores_by_key[key])
+        fused_results.append(context)
+
+    return fused_results
+
+
 def search_knowledge(query: str, top_k: int = 3) -> list[dict[str, str]]:
     documents = load_documents()
     keywords = query.lower().split()
@@ -160,6 +206,30 @@ def semantic_search_knowledge(
         context
         for _, context in scored_results[:top_k]
     ]
+
+
+def hybrid_search_knowledge(
+    query: str,
+    top_k: int = 3,
+    candidate_k: int = 10,
+    min_semantic_score: float = 0.2,
+) -> list[dict[str, str]]:
+    keyword_results = search_knowledge(
+        query,
+        top_k=candidate_k,
+    )
+    semantic_results = semantic_search_knowledge(
+        query,
+        top_k=candidate_k,
+        min_score=min_semantic_score,
+    )
+
+    return fuse_ranked_results(
+        [keyword_results, semantic_results],
+        top_k=top_k,
+    )
+
+
 def format_contexts(contexts: list[dict[str, str]]) -> str:
     if not contexts:
         return "没有检索到相关资料。"
@@ -179,7 +249,7 @@ def format_contexts(contexts: list[dict[str, str]]) -> str:
 
 
 def build_rag_messages(question: str) -> list[dict]:
-    contexts = semantic_search_knowledge(question)
+    contexts = hybrid_search_knowledge(question)
     context_text = format_contexts(contexts)
 
     return [
@@ -202,8 +272,9 @@ def build_rag_messages(question: str) -> list[dict]:
         },
     ]
 
+
 def answer_with_context(question: str) -> dict:
-    contexts = search_knowledge(question)
+    contexts = hybrid_search_knowledge(question)
 
     return {
         "question": question,
