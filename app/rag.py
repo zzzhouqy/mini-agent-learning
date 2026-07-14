@@ -2,6 +2,7 @@ from pathlib import Path
 from app.agent import send_messages
 from app.config import LLMConfig
 from app.embeddings import semantic_scores
+from app.reranker import rerank_contexts
 
 KNOWLEDGE_PATH = Path(__file__).resolve().parent.parent / "data" / "knowledge.md"
 KNOWLEDGE_DIR = Path(__file__).resolve().parent.parent / "data" / "knowledge"
@@ -230,6 +231,26 @@ def hybrid_search_knowledge(
     )
 
 
+def reranked_search_knowledge(
+    query: str,
+    top_k: int = 3,
+    candidate_k: int = 10,
+    min_semantic_score: float = 0.2,
+) -> list[dict]:
+    candidates = hybrid_search_knowledge(
+        query,
+        top_k=candidate_k,
+        candidate_k=candidate_k,
+        min_semantic_score=min_semantic_score,
+    )
+
+    return rerank_contexts(
+        query,
+        candidates,
+        top_k=top_k,
+    )
+
+
 def format_contexts(contexts: list[dict[str, str]]) -> str:
     if not contexts:
         return "没有检索到相关资料。"
@@ -249,7 +270,7 @@ def format_contexts(contexts: list[dict[str, str]]) -> str:
 
 
 def build_rag_messages(question: str) -> list[dict]:
-    contexts = hybrid_search_knowledge(question)
+    contexts = reranked_search_knowledge(question)
     context_text = format_contexts(contexts)
 
     return [
@@ -260,7 +281,8 @@ def build_rag_messages(question: str) -> list[dict]:
                 "你只能基于用户提供的资料回答问题。"
                 "如果资料不足，请回答：资料不足，无法基于本地知识库回答。"
                 "不要编造资料中不存在的信息。"
-                "如果资料中包含来源和标题，请在回答末尾用“依据：”列出来源和标题。"
+                "回答末尾必须用“依据：标题（来源：路径）”列出引用。"
+                "不得只写标题而省略来源路径。"
             ),
         },
         {
@@ -274,7 +296,7 @@ def build_rag_messages(question: str) -> list[dict]:
 
 
 def answer_with_context(question: str) -> dict:
-    contexts = hybrid_search_knowledge(question)
+    contexts = reranked_search_knowledge(question)
 
     return {
         "question": question,

@@ -1,6 +1,7 @@
 import pytest
 
 from app.rag import (
+    build_rag_messages,
     format_contexts,
     score_chunk,
     search_knowledge,
@@ -8,6 +9,7 @@ from app.rag import (
     reciprocal_rank_score,
     fuse_ranked_results,
     hybrid_search_knowledge,
+    reranked_search_knowledge,
     answer_with_context,
 )
 
@@ -168,23 +170,24 @@ def test_hybrid_search_fuses_keyword_and_semantic_results(monkeypatch):
     assert [result["title"] for result in results] == ["B", "A"]
 
 
-def test_answer_with_context_uses_hybrid_search(monkeypatch):
+def test_answer_with_context_uses_reranked_search(monkeypatch):
     expected_contexts = [
         {
             "source": "data/test.md",
             "title": "测试资料",
             "content": "测试内容",
             "score": "0.03",
+            "rerank_score": 0.9,
         }
     ]
 
-    def fake_hybrid_search(query: str):
+    def fake_reranked_search(query: str):
         assert query == "测试问题"
         return expected_contexts
 
     monkeypatch.setattr(
-        "app.rag.hybrid_search_knowledge",
-        fake_hybrid_search,
+        "app.rag.reranked_search_knowledge",
+        fake_reranked_search,
     )
 
     result = answer_with_context("测试问题")
@@ -193,3 +196,90 @@ def test_answer_with_context_uses_hybrid_search(monkeypatch):
         "question": "测试问题",
         "contexts": expected_contexts,
     }
+
+
+def test_build_rag_messages_requires_source_path(monkeypatch):
+    contexts = [
+        {
+            "source": "data/test.md",
+            "title": "测试资料",
+            "content": "测试内容",
+            "score": "0.03",
+            "rerank_score": 0.9,
+        }
+    ]
+
+    monkeypatch.setattr(
+        "app.rag.reranked_search_knowledge",
+        lambda question: contexts,
+    )
+
+    messages = build_rag_messages("测试问题")
+
+    assert "依据：标题（来源：路径）" in messages[0]["content"]
+    assert "来源：data/test.md" in messages[1]["content"]
+
+
+def test_reranked_search_uses_hybrid_candidates(monkeypatch):
+    candidates = [
+        {
+            "source": "data/a.md",
+            "title": "A",
+            "content": "候选 A",
+            "score": "0.03",
+        },
+        {
+            "source": "data/b.md",
+            "title": "B",
+            "content": "候选 B",
+            "score": "0.02",
+        },
+    ]
+    expected_results = [
+        {
+            **candidates[1],
+            "rerank_score": 0.9,
+        }
+    ]
+
+    def fake_hybrid_search(
+        query: str,
+        top_k: int,
+        candidate_k: int,
+        min_semantic_score: float,
+    ):
+        assert query == "测试问题"
+        assert top_k == 5
+        assert candidate_k == 5
+        assert min_semantic_score == 0.4
+
+        return candidates
+
+    def fake_rerank_contexts(
+        query: str,
+        contexts: list[dict],
+        top_k: int,
+    ):
+        assert query == "测试问题"
+        assert contexts == candidates
+        assert top_k == 1
+
+        return expected_results
+
+    monkeypatch.setattr(
+        "app.rag.hybrid_search_knowledge",
+        fake_hybrid_search,
+    )
+    monkeypatch.setattr(
+        "app.rag.rerank_contexts",
+        fake_rerank_contexts,
+    )
+
+    results = reranked_search_knowledge(
+        "测试问题",
+        top_k=1,
+        candidate_k=5,
+        min_semantic_score=0.4,
+    )
+
+    assert results == expected_results
