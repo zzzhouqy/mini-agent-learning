@@ -4,6 +4,8 @@ from app.rag_eval import (
     evaluate_retriever,
     hit_at_k,
     reciprocal_rank_at_k,
+    section_hit_at_k,
+    section_recall_at_k,
     source_recall_at_k,
     summarize_retrieval_results,
     top1_hit,
@@ -22,6 +24,17 @@ def test_ranking_metrics_distinguish_position_and_coverage():
     assert hit_at_k(expected_sources, contexts, 2) is True
     assert source_recall_at_k(expected_sources, contexts, 2) == 0.5
     assert reciprocal_rank_at_k(expected_sources, contexts, 3) == 0.5
+
+
+def test_section_metrics_distinguish_hit_and_coverage():
+    expected_sections = ["解析边界", "Pydantic"]
+    contexts = [
+        {"section": "解析边界"},
+        {"section": "其他章节"},
+    ]
+
+    assert section_hit_at_k(expected_sections, contexts, 2) is True
+    assert section_recall_at_k(expected_sections, contexts, 2) == 0.5
 
 
 def test_no_answer_case_requires_empty_contexts():
@@ -68,3 +81,30 @@ def test_evaluate_retriever_uses_shared_search_interface():
     assert summary["top1_accuracy"] == 0.0
     assert summary["hit_at_k"] == 1.0
     assert summary["mrr_at_k"] == 0.5
+
+
+def test_summary_ignores_cases_without_section_labels():
+    results = [
+        {
+            "top1_hit": True,
+            "hit_at_k": True,
+            "source_recall_at_k": 1.0,
+            "reciprocal_rank_at_k": 1.0,
+            "section_hit_at_k": True,
+            "section_recall_at_k": 1.0,
+            "no_answer_correct": None,
+        },
+        {
+            "top1_hit": True,
+            "hit_at_k": True,
+            "source_recall_at_k": 1.0,
+            "reciprocal_rank_at_k": 1.0,
+            "no_answer_correct": None,
+        },
+    ]
+
+    summary = summarize_retrieval_results(results)
+
+    assert summary["section_evaluated_cases"] == 1
+    assert summary["section_hit_at_k"] == 1.0
+    assert summary["mean_section_recall_at_k"] == 1.0

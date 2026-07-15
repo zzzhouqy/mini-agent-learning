@@ -18,6 +18,7 @@ class RAGEvalCase(BaseModel):
     id: str = Field(min_length=1)
     question: str = Field(min_length=1)
     expected_sources: list[str]
+    expected_sections: list[str] = Field(default_factory=list)
     should_answer: bool
 
 
@@ -70,6 +71,45 @@ def top1_hit(
         k=1,
     )
 
+def section_hit_at_k(
+    expected_sections: list[str],
+    contexts: list[dict],
+    k: int,
+) -> bool:
+    if k < 1:
+        raise ValueError("k 必须大于或等于 1。")
+    if not expected_sections:
+        raise ValueError("expected_sections 不能为空。")
+
+    retrieved_sections = {
+        context.get("section")
+        for context in contexts[:k]
+    }
+
+    return any(
+        section in retrieved_sections
+        for section in expected_sections
+    )
+def section_recall_at_k(
+    expected_sections: list[str],
+    contexts: list[dict],
+    k: int,
+) -> float:
+    if k < 1:
+        raise ValueError("k 必须大于或等于 1。")
+    if not expected_sections:
+        raise ValueError("expected_sections 不能为空。")
+
+    retrieved_sections = {
+        context.get("section")
+        for context in contexts[:k]
+    }
+    matched_count = sum(
+        section in retrieved_sections
+        for section in expected_sections
+    )
+
+    return matched_count / len(expected_sections)
 
 def source_recall_at_k(
     expected_sources: list[str],
@@ -125,6 +165,10 @@ def evaluate_retrieval_case(
         context["source"]
         for context in contexts[:k]
     ]
+    retrieved_sections = [
+        context.get("section")
+        for context in contexts[:k]
+    ]
 
     if not case.should_answer:
         return {
@@ -132,10 +176,14 @@ def evaluate_retrieval_case(
             "question": case.question,
             "expected_sources": case.expected_sources,
             "retrieved_sources": retrieved_sources,
+            "expected_sections": case.expected_sections,
+            "retrieved_sections": retrieved_sections,
             "top1_hit": None,
             "hit_at_k": None,
             "source_recall_at_k": None,
             "reciprocal_rank_at_k": None,
+            "section_hit_at_k": None,
+            "section_recall_at_k": None,
             "no_answer_correct": len(contexts) == 0,
         }
 
@@ -144,6 +192,8 @@ def evaluate_retrieval_case(
         "question": case.question,
         "expected_sources": case.expected_sources,
         "retrieved_sources": retrieved_sources,
+        "expected_sections": case.expected_sections,
+        "retrieved_sections": retrieved_sections,
         "top1_hit": top1_hit(
             case.expected_sources,
             contexts,
@@ -162,6 +212,24 @@ def evaluate_retrieval_case(
             case.expected_sources,
             contexts,
             k,
+        ),
+        "section_hit_at_k": (
+            section_hit_at_k(
+                case.expected_sections,
+                contexts,
+                k,
+            )
+            if case.expected_sections
+            else None
+        ),
+        "section_recall_at_k": (
+            section_recall_at_k(
+                case.expected_sections,
+                contexts,
+                k,
+            )
+            if case.expected_sections
+            else None
         ),
         "no_answer_correct": None,
     }
@@ -210,6 +278,16 @@ def summarize_retrieval_results(
         for result in results
         if result["source_recall_at_k"] is not None
     ]
+    section_hit_values = [
+        result["section_hit_at_k"]
+        for result in results
+        if result.get("section_hit_at_k") is not None
+    ]
+    section_recall_values = [
+        result["section_recall_at_k"]
+        for result in results
+        if result.get("section_recall_at_k") is not None
+    ]
     reciprocal_rank_values = [
         result["reciprocal_rank_at_k"]
         for result in results
@@ -238,6 +316,18 @@ def summarize_retrieval_results(
         "mean_source_recall_at_k": (
             sum(recall_values) / len(recall_values)
             if recall_values
+            else None
+        ),
+        "section_evaluated_cases": len(section_hit_values),
+        "section_hit_at_k": (
+            sum(section_hit_values) / len(section_hit_values)
+            if section_hit_values
+            else None
+        ),
+        "mean_section_recall_at_k": (
+            sum(section_recall_values)
+            / len(section_recall_values)
+            if section_recall_values
             else None
         ),
         "mrr_at_k": (

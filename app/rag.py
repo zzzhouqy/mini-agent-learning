@@ -76,10 +76,19 @@ def build_context_from_document(
     document_lines = document["text"].splitlines()
     title = document_lines[0].lstrip("# ").strip()
     content = chunk.strip()
+    content_lines = content.splitlines()
+    first_line = content_lines[0] if content_lines else ""
+
+    section = (
+        first_line.lstrip("# ").strip()
+        if first_line.startswith("#")
+        else title
+    )
 
     return {
         "source": document["source"],
         "title": title,
+        "section": section,
         "content": content,
         "score": str(score),
     }
@@ -262,6 +271,7 @@ def format_contexts(contexts: list[dict[str, str]]) -> str:
                 f"[资料 {index}]\n"
                 f"来源：{context['source']}\n"
                 f"标题：{context['title']}\n"
+                f"章节：{context.get('section', context['title'])}\n"
                 f"内容：\n{context['content']}"
             )
         )

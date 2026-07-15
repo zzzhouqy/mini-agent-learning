@@ -41,6 +41,30 @@
       "should_answer": true
     },
     {
+        "id": "json_direct",
+        "question": "Python 如何把合法的 JSON 字符串转换成字典？",
+        "expected_sources": [
+          "data/knowledge/json_format.md"
+        ],
+        "expected_sections": [
+          "JSON 语法"
+        ],
+        "should_answer": true
+      },
+      {
+        "id": "json_validation_boundary",
+        "question": "为什么合法 JSON 仍不能证明工具参数的字段和类型正确？",
+        "expected_sources": [
+          "data/knowledge/json_format.md",
+          "data/knowledge/pydantic.md"
+        ],
+        "expected_sections": [
+          "解析边界",
+          "Pydantic"
+        ],
+        "should_answer": true
+      },
+    {
       "id": "weather_no_answer",
       "question": "今天北京天气怎么样？",
       "expected_sources": [],
