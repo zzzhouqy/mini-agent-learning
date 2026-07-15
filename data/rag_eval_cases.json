@@ -1,0 +1,49 @@
+[
+    {
+      "id": "pydantic_direct",
+      "question": "如何验证模型生成的工具参数类型和字段名？",
+      "expected_sources": [
+        "data/knowledge/pydantic.md"
+      ],
+      "should_answer": true
+    },
+    {
+      "id": "agent_loop_direct",
+      "question": "模型调用工具后，为什么还要把工具执行结果发送回模型？",
+      "expected_sources": [
+        "data/knowledge/agent_loop.md"
+      ],
+      "should_answer": true
+    },
+    {
+      "id": "csv_tool_direct",
+      "question": "CSV 工具如何避免模型读取任意本地文件？",
+      "expected_sources": [
+        "data/knowledge/csv_tool.md"
+      ],
+      "should_answer": true
+    },
+    {
+      "id": "validation_retry_multi_source",
+      "question": "工具参数校验失败时，Agent 如何重新尝试并避免无限循环？",
+      "expected_sources": [
+        "data/knowledge/pydantic.md",
+        "data/knowledge/agent_loop.md"
+      ],
+      "should_answer": true
+    },
+    {
+      "id": "pydantic_semantic_mismatch",
+      "question": "怎样给函数调用入口建立数据防线？",
+      "expected_sources": [
+        "data/knowledge/pydantic.md"
+      ],
+      "should_answer": true
+    },
+    {
+      "id": "weather_no_answer",
+      "question": "今天北京天气怎么样？",
+      "expected_sources": [],
+      "should_answer": false
+    }
+  ]
