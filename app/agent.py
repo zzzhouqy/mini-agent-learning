@@ -118,8 +118,11 @@ def agent_loop(
     config: LLMConfig,
     max_steps: int = 5,
     max_validation_retries: int = 2,
-) -> None:
-    messages = [{"role": "user", "content": query}]
+    messages: list[dict] | None = None,
+) -> str | None:
+    messages = (
+        messages or [{"role": "user", "content": query}]
+    ).copy()
     validation_failures = 0
     for step in range(1, max_steps + 1):
         print(f"\n第 {step} 轮")
@@ -132,14 +135,14 @@ def agent_loop(
         # 模型没有调用工具，说明任务完成
         if not tool_calls:
             print(f"模型最终回答：{message['content']}")
-            return
+            return message["content"]
 
         # 执行本轮的所有工具
         for tool_call in tool_calls:
             tool_name = tool_call["function"]["name"]
             arguments_text = tool_call["function"]["arguments"]
 
-            arguments, result,validation_failed = execute_tool(
+            arguments, result, validation_failed = execute_tool(
                 tool_name,
                 arguments_text,
             )
