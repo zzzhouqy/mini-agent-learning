@@ -27,3 +27,8 @@ class MemoryRecord(MemoryCreate):
     memory_id: int = Field(ge=1)
     created_at: str = Field(min_length=1)
     updated_at: str = Field(min_length=1)
+
+
+class MemoryMatch(BaseModel):
+    memory: MemoryRecord
+    score: float = Field(ge=-1.0, le=1.0)
