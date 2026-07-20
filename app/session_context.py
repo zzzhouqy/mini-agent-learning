@@ -11,6 +11,7 @@ def build_session_context(
     system_prompt: str,
     current_query: str,
     max_messages: int = 3,
+    memory_context: str = "",
 ) -> list[dict]:
     history = get_recent_messages(
         database_path,
@@ -24,4 +25,5 @@ def build_session_context(
         history,
         current_query,
         max_messages=max_messages,
+        memory_context=memory_context,
     )

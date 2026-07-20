@@ -44,3 +44,27 @@ def test_build_context_messages_preserves_message_order():
         {"role": "user", "content": "E"},
     ]
     assert len(history) == 4
+
+
+def test_build_context_messages_injects_memory_into_system_message():
+    memory_context = (
+        "<relevant_memories>\n"
+        "1. [preference] 用户喜欢用表格总结。\n"
+        "</relevant_memories>"
+    )
+
+    result = build_context_messages(
+        "你是学习助手",
+        [],
+        "我喜欢怎样总结？",
+        memory_context=memory_context,
+    )
+
+    assert result[0] == {
+        "role": "system",
+        "content": f"你是学习助手\n\n{memory_context}",
+    }
+    assert result[-1] == {
+        "role": "user",
+        "content": "我喜欢怎样总结？",
+    }

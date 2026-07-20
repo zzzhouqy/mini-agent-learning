@@ -1,7 +1,7 @@
 import pytest
 
 import app.memory_retriever as memory_retriever
-from app.memory import MemoryCreate
+from app.memory import MemoryCreate, MemoryMatch, MemoryRecord
 from app.memory_store import add_memory
 
 
@@ -109,3 +109,25 @@ def test_search_user_memories_rejects_invalid_arguments(arguments, message):
             "测试问题",
             **arguments,
         )
+
+
+def test_format_memory_matches_builds_bounded_context():
+    memory = MemoryRecord(
+        memory_id=1,
+        user_id="user_001",
+        source_session_id="session_A",
+        memory_type="preference",
+        content="用户喜欢用表格总结。",
+        source="user_explicit",
+        created_at="2026-07-20 10:00:00",
+        updated_at="2026-07-20 10:00:00",
+    )
+
+    result = memory_retriever.format_memory_matches(
+        [MemoryMatch(memory=memory, score=0.82)],
+    )
+
+    assert result.startswith("<relevant_memories>\n")
+    assert "1. [preference] 用户喜欢用表格总结。" in result
+    assert result.endswith("\n</relevant_memories>")
+    assert memory_retriever.format_memory_matches([]) == ""

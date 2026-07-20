@@ -13,11 +13,16 @@ def build_context_messages(
     history: list[dict],
     current_query: str,
     max_messages: int = 3,
+    memory_context: str = "",
 ) -> list[dict]:
     recent_messages = select_recent_messages(history, max_messages)
+    system_content = system_prompt
+
+    if memory_context:
+        system_content = f"{system_prompt}\n\n{memory_context}"
 
     return [
-        {"role": "system", "content": system_prompt},
+        {"role": "system", "content": system_content},
         *recent_messages,
         {"role": "user", "content": current_query},
     ]
