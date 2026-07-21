@@ -3,6 +3,24 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class MemoryCandidate(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        strict=True,
+    )
+
+    memory_type: Literal[
+        "preference",
+        "fact",
+        "decision",
+    ]
+    content: str = Field(min_length=1)
+    source: Literal[
+        "user_explicit",
+        "model_inferred",
+    ]
+
+
 class MemoryCreate(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -19,6 +37,7 @@ class MemoryCreate(BaseModel):
     content: str = Field(min_length=1)
     source: Literal[
         "user_explicit",
+        "model_inferred",
         "manual",
     ]
 
