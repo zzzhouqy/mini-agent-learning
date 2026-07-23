@@ -9,7 +9,7 @@ from app.memory import (
     MemoryExtractionResult,
     MemoryRecord,
 )
-from app.memory_store import add_memory
+from app.memory_store import add_memory, get_user_memories
 
 
 EXPLICIT_MEMORY_PREFIXES = (
@@ -103,6 +103,34 @@ def contains_sensitive_memory_content(content: str) -> bool:
     )
 
 
+def normalize_memory_content(content: str) -> str:
+    normalized_content = " ".join(content.casefold().split())
+
+    return normalized_content.rstrip("。.!！?？")
+
+
+def find_duplicate_memory(
+    database_path: str | Path,
+    memory: MemoryCreate,
+) -> MemoryRecord | None:
+    normalized_content = normalize_memory_content(memory.content)
+
+    for existing_memory in get_user_memories(
+        database_path,
+        memory.user_id,
+    ):
+        if existing_memory.memory_type != memory.memory_type:
+            continue
+
+        if (
+            normalize_memory_content(existing_memory.content)
+            == normalized_content
+        ):
+            return existing_memory
+
+    return None
+
+
 def parse_memory_extraction_response(
     response_text: str,
 ) -> list[MemoryCandidate]:
@@ -179,6 +207,28 @@ def build_memory_create(
     )
 
 
+def save_memory_candidate(
+    database_path: str | Path,
+    user_id: str,
+    source_session_id: str,
+    candidate: MemoryCandidate,
+) -> MemoryRecord | None:
+    if contains_sensitive_memory_content(candidate.content):
+        return None
+
+    memory = build_memory_create(
+        candidate,
+        user_id,
+        source_session_id,
+    )
+    duplicate = find_duplicate_memory(database_path, memory)
+
+    if duplicate is not None:
+        return duplicate
+
+    return add_memory(database_path, memory)
+
+
 def save_explicit_memory(
     database_path: str | Path,
     user_id: str,
@@ -198,10 +248,9 @@ def save_explicit_memory(
     if candidate is None:
         return None
 
-    memory = build_memory_create(
-        candidate,
+    return save_memory_candidate(
+        database_path,
         user_id,
         source_session_id,
+        candidate,
     )
-
-    return add_memory(database_path, memory)

@@ -30,6 +30,7 @@ def initialize_memory_database(
                         CHECK (
                             source IN (
                                 'user_explicit',
+                                'model_inferred',
                                 'manual'
                             )
                         ),

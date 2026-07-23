@@ -12,6 +12,7 @@ from app.memory_writer import (
     extract_inferred_memory_candidates,
     extract_explicit_memory_text,
     parse_memory_extraction_response,
+    save_memory_candidate,
     save_explicit_memory,
 )
 
@@ -224,3 +225,73 @@ def test_extract_inferred_memory_candidates_rejects_non_text_response(
             "测试回答",
             None,
         )
+
+
+def test_save_memory_candidate_deduplicates_within_one_user(tmp_path):
+    database_path = tmp_path / "memories.db"
+    original = save_explicit_memory(
+        database_path,
+        "user_001",
+        "session_A",
+        "请记住：用户喜欢用表格总结。",
+        "preference",
+    )
+    duplicate = save_memory_candidate(
+        database_path,
+        "user_001",
+        "session_B",
+        MemoryCandidate(
+            memory_type="preference",
+            content="用户喜欢用表格总结",
+            source="model_inferred",
+        ),
+    )
+
+    memories = get_user_memories(database_path, "user_001")
+
+    assert original is not None
+    assert duplicate is not None
+    assert duplicate.memory_id == original.memory_id
+    assert len(memories) == 1
+    assert memories[0].source == "user_explicit"
+
+
+def test_save_memory_candidate_keeps_users_isolated_and_filters_secret(tmp_path):
+    database_path = tmp_path / "memories.db"
+    first = save_memory_candidate(
+        database_path,
+        "user_001",
+        "session_A",
+        MemoryCandidate(
+            memory_type="preference",
+            content="用户喜欢用表格总结。",
+            source="model_inferred",
+        ),
+    )
+    second = save_memory_candidate(
+        database_path,
+        "user_002",
+        "session_A",
+        MemoryCandidate(
+            memory_type="preference",
+            content="用户喜欢用表格总结。",
+            source="model_inferred",
+        ),
+    )
+    secret = save_memory_candidate(
+        database_path,
+        "user_001",
+        "session_B",
+        MemoryCandidate(
+            memory_type="fact",
+            content="用户的 API Key 是 sk-xxxx。",
+            source="model_inferred",
+        ),
+    )
+
+    assert first is not None
+    assert second is not None
+    assert first.memory_id != second.memory_id
+    assert secret is None
+    assert len(get_user_memories(database_path, "user_001")) == 1
+    assert len(get_user_memories(database_path, "user_002")) == 1
