@@ -21,6 +21,29 @@ class MemoryCandidate(BaseModel):
     ]
 
 
+class MemoryExtractionItem(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        strict=True,
+    )
+
+    memory_type: Literal[
+        "preference",
+        "fact",
+        "decision",
+    ]
+    content: str = Field(min_length=1)
+
+
+class MemoryExtractionResult(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        strict=True,
+    )
+
+    candidates: list[MemoryExtractionItem]
+
+
 class MemoryCreate(BaseModel):
     model_config = ConfigDict(
         extra="forbid",

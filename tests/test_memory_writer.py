@@ -1,13 +1,17 @@
 import pytest
 from pydantic import ValidationError
 
+import app.memory_writer as memory_writer
 from app.memory import MemoryCandidate
 from app.memory_store import get_user_memories
 from app.memory_writer import (
     build_explicit_memory_candidate,
     build_memory_create,
+    build_memory_extraction_messages,
     contains_sensitive_memory_content,
+    extract_inferred_memory_candidates,
     extract_explicit_memory_text,
+    parse_memory_extraction_response,
     save_explicit_memory,
 )
 
@@ -117,3 +121,106 @@ def test_save_explicit_memory_only_persists_safe_candidate(tmp_path):
     assert [memory.content for memory in memories] == [
         "我喜欢用表格总结。",
     ]
+
+
+def test_build_memory_extraction_messages_uses_data_boundaries():
+    messages = build_memory_extraction_messages(
+        "请记住：我喜欢用表格总结。",
+        "好的，我会优先用表格总结。",
+    )
+
+    assert len(messages) == 2
+    assert messages[0]["role"] == "system"
+    assert "不要输出 source" in messages[0]["content"]
+    assert "<user_message>" in messages[1]["content"]
+    assert "<assistant_answer>" in messages[1]["content"]
+
+
+def test_parse_memory_extraction_response_normalizes_and_filters_secret():
+    response_text = """
+    {
+      "candidates": [
+        {
+          "memory_type": "preference",
+          "content": "用户喜欢用表格总结。"
+        },
+        {
+          "memory_type": "fact",
+          "content": "用户的 API Key 是 sk-xxxx。"
+        }
+      ]
+    }
+    """
+
+    results = parse_memory_extraction_response(response_text)
+
+    assert [candidate.model_dump() for candidate in results] == [
+        {
+            "memory_type": "preference",
+            "content": "用户喜欢用表格总结。",
+            "source": "model_inferred",
+        },
+    ]
+
+
+@pytest.mark.parametrize(
+    "response_text",
+    [
+        "not json",
+        '{"candidates": [{"memory_type": "chat", "content": "临时聊天"}]}',
+        '{"candidates": [{"memory_type": "fact", "content": "测试", "source": "model_inferred"}]}',
+    ],
+)
+def test_parse_memory_extraction_response_rejects_invalid_model_output(
+    response_text,
+):
+    with pytest.raises(ValidationError):
+        parse_memory_extraction_response(response_text)
+
+
+def test_extract_inferred_memory_candidates_calls_model_and_returns_candidate(
+    monkeypatch,
+):
+    captured = {}
+
+    def fake_send_messages(config, messages, tools=None):
+        captured["config"] = config
+        captured["messages"] = messages
+        assert tools is None
+        return {
+            "role": "assistant",
+            "content": (
+                '{"candidates": [{"memory_type": "decision", '
+                '"content": "项目继续使用 SQLite。"}]}'
+            ),
+        }
+
+    monkeypatch.setattr(memory_writer, "send_messages", fake_send_messages)
+
+    results = extract_inferred_memory_candidates(
+        "我决定项目继续使用 SQLite。",
+        "SQLite 足以满足当前需求。",
+        "test_config",
+    )
+
+    assert captured["config"] == "test_config"
+    assert captured["messages"][0]["role"] == "system"
+    assert [candidate.source for candidate in results] == ["model_inferred"]
+    assert [candidate.memory_type for candidate in results] == ["decision"]
+
+
+def test_extract_inferred_memory_candidates_rejects_non_text_response(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        memory_writer,
+        "send_messages",
+        lambda config, messages: {"role": "assistant", "content": None},
+    )
+
+    with pytest.raises(ValueError, match="模型未返回文本内容"):
+        extract_inferred_memory_candidates(
+            "测试问题",
+            "测试回答",
+            None,
+        )
