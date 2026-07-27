@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 from app.agent import agent_loop
@@ -6,8 +7,15 @@ from app.memory_retriever import (
     format_memory_matches,
     search_user_memories,
 )
+from app.memory_writer import (
+    extract_inferred_memory_candidates,
+    save_memory_candidates,
+)
 from app.session_context import build_session_context
 from app.session_store import add_exchange
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 def run_session_agent(
@@ -54,5 +62,19 @@ def run_session_agent(
         query,
         answer,
     )
+    try:
+        candidates = extract_inferred_memory_candidates(
+            query,
+            answer,
+            config,
+        )
+        save_memory_candidates(
+            database_path,
+            user_id,
+            session_id,
+            candidates,
+        )
+    except Exception:
+        LOGGER.exception("自动长期记忆写入失败。")
 
     return answer

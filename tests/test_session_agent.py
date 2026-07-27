@@ -1,6 +1,8 @@
 import pytest
 
 import app.session_agent as session_agent
+from app.memory import MemoryCandidate
+from app.memory_store import get_user_memories
 from app.session_store import add_exchange, get_recent_messages
 
 
@@ -20,6 +22,11 @@ def test_run_session_agent_saves_successful_exchange(tmp_path, monkeypatch):
         return "你喜欢用表格总结"
 
     monkeypatch.setattr(session_agent, "agent_loop", fake_agent_loop)
+    monkeypatch.setattr(
+        session_agent,
+        "extract_inferred_memory_candidates",
+        lambda user_message, assistant_answer, config: [],
+    )
 
     result = session_agent.run_session_agent(
         "我喜欢怎样总结？",
@@ -92,6 +99,11 @@ def test_run_session_agent_retrieves_and_injects_memory(tmp_path, monkeypatch):
     monkeypatch.setattr(session_agent, "search_user_memories", fake_search)
     monkeypatch.setattr(session_agent, "format_memory_matches", fake_format)
     monkeypatch.setattr(session_agent, "agent_loop", fake_agent_loop)
+    monkeypatch.setattr(
+        session_agent,
+        "extract_inferred_memory_candidates",
+        lambda user_message, assistant_answer, config: [],
+    )
 
     result = session_agent.run_session_agent(
         "我喜欢怎样总结？",
@@ -138,3 +150,97 @@ def test_run_session_agent_exposes_memory_retrieval_failure(
         "session_A",
         max_messages=10,
     ) == []
+
+
+def test_run_session_agent_saves_inferred_memory_after_exchange(
+    tmp_path,
+    monkeypatch,
+):
+    database_path = tmp_path / "sessions.db"
+
+    monkeypatch.setattr(
+        session_agent,
+        "agent_loop",
+        lambda query, config, messages=None: "好的，我会使用表格。",
+    )
+
+    def fake_extract(user_message, assistant_answer, config):
+        assert get_recent_messages(
+            database_path,
+            "user_001",
+            "session_A",
+            max_messages=2,
+        ) == [
+            {"role": "user", "content": "请记住：我喜欢用表格总结。"},
+            {"role": "assistant", "content": "好的，我会使用表格。"},
+        ]
+        return [
+            MemoryCandidate(
+                memory_type="preference",
+                content="用户喜欢用表格总结。",
+                source="model_inferred",
+            )
+        ]
+
+    monkeypatch.setattr(
+        session_agent,
+        "extract_inferred_memory_candidates",
+        fake_extract,
+    )
+
+    result = session_agent.run_session_agent(
+        "请记住：我喜欢用表格总结。",
+        None,
+        database_path,
+        "user_001",
+        "session_A",
+        "你是学习助手",
+    )
+
+    assert result == "好的，我会使用表格。"
+    assert [memory.content for memory in get_user_memories(
+        database_path,
+        "user_001",
+    )] == ["用户喜欢用表格总结。"]
+
+
+def test_run_session_agent_keeps_answer_when_memory_extraction_fails(
+    tmp_path,
+    monkeypatch,
+):
+    database_path = tmp_path / "sessions.db"
+    monkeypatch.setattr(
+        session_agent,
+        "agent_loop",
+        lambda query, config, messages=None: "正常回答",
+    )
+
+    def fail_extract(*args, **kwargs):
+        raise ValueError("模型返回非法 JSON")
+
+    monkeypatch.setattr(
+        session_agent,
+        "extract_inferred_memory_candidates",
+        fail_extract,
+    )
+
+    result = session_agent.run_session_agent(
+        "测试问题",
+        None,
+        database_path,
+        "user_001",
+        "session_A",
+        "你是学习助手",
+    )
+
+    assert result == "正常回答"
+    assert get_recent_messages(
+        database_path,
+        "user_001",
+        "session_A",
+        max_messages=2,
+    ) == [
+        {"role": "user", "content": "测试问题"},
+        {"role": "assistant", "content": "正常回答"},
+    ]
+    assert get_user_memories(database_path, "user_001") == []

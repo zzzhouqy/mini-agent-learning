@@ -229,6 +229,28 @@ def save_memory_candidate(
     return add_memory(database_path, memory)
 
 
+def save_memory_candidates(
+    database_path: str | Path,
+    user_id: str,
+    source_session_id: str,
+    candidates: list[MemoryCandidate],
+) -> list[MemoryRecord]:
+    saved_records = []
+
+    for candidate in candidates:
+        record = save_memory_candidate(
+            database_path,
+            user_id,
+            source_session_id,
+            candidate,
+        )
+
+        if record is not None:
+            saved_records.append(record)
+
+    return saved_records
+
+
 def save_explicit_memory(
     database_path: str | Path,
     user_id: str,

@@ -13,6 +13,7 @@ from app.memory_writer import (
     extract_explicit_memory_text,
     parse_memory_extraction_response,
     save_memory_candidate,
+    save_memory_candidates,
     save_explicit_memory,
 )
 
@@ -295,3 +296,48 @@ def test_save_memory_candidate_keeps_users_isolated_and_filters_secret(tmp_path)
     assert secret is None
     assert len(get_user_memories(database_path, "user_001")) == 1
     assert len(get_user_memories(database_path, "user_002")) == 1
+
+
+def test_save_memory_candidates_reuses_safe_single_writer(tmp_path):
+    database_path = tmp_path / "memories.db"
+    original = save_explicit_memory(
+        database_path,
+        "user_001",
+        "session_A",
+        "请记住：用户喜欢用表格总结。",
+        "preference",
+    )
+
+    records = save_memory_candidates(
+        database_path,
+        "user_001",
+        "session_B",
+        [
+            MemoryCandidate(
+                memory_type="preference",
+                content="用户喜欢用表格总结",
+                source="model_inferred",
+            ),
+            MemoryCandidate(
+                memory_type="decision",
+                content="项目继续使用 SQLite。",
+                source="model_inferred",
+            ),
+            MemoryCandidate(
+                memory_type="fact",
+                content="用户 API Key 是 sk-xxxx。",
+                source="model_inferred",
+            ),
+        ],
+    )
+    memories = get_user_memories(database_path, "user_001")
+
+    assert original is not None
+    assert [record.memory_id for record in records] == [
+        original.memory_id,
+        2,
+    ]
+    assert [memory.content for memory in memories] == [
+        "用户喜欢用表格总结。",
+        "项目继续使用 SQLite。",
+    ]
