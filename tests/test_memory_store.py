@@ -3,9 +3,16 @@ import sqlite3
 import pytest
 from pydantic import ValidationError
 
-from app.memory import MemoryCreate
+from app.memory import (
+    MemoryCreate,
+    MemoryReplacementProposalCreate,
+)
 from app.memory_store import (
     add_memory,
+    add_memory_replacement_proposal,
+    cancel_memory_replacement_proposal,
+    confirm_memory_replacement_proposal,
+    get_pending_memory_replacement_proposal,
     get_user_memories,
     initialize_memory_database,
     replace_memory,
@@ -393,3 +400,196 @@ def test_replace_memory_rejects_untrusted_identity_and_type_before_insert(
     assert [(memory.memory_id, memory.status) for memory in all_memories] == [
         (old_memory.memory_id, "active"),
     ]
+
+
+def test_pending_replacement_proposal_is_scoped_to_user_and_session(tmp_path):
+    database_path = tmp_path / "memories.db"
+    old_memory = add_memory(
+        database_path,
+        MemoryCreate(
+            user_id="user_001",
+            source_session_id="session_A",
+            memory_type="decision",
+            content="项目使用 SQLite。",
+            source="manual",
+        ),
+    )
+    proposal = add_memory_replacement_proposal(
+        database_path,
+        MemoryReplacementProposalCreate(
+            user_id="user_001",
+            session_id="session_A",
+            old_memory_id=old_memory.memory_id,
+            old_content_snapshot=old_memory.content,
+            memory_type="decision",
+            new_content="项目使用 PostgreSQL。",
+            source="model_inferred",
+        ),
+    )
+
+    found = get_pending_memory_replacement_proposal(
+        database_path,
+        "user_001",
+        "session_A",
+        proposal.proposal_id,
+    )
+
+    assert found.status == "pending"
+    assert found.old_memory_id == old_memory.memory_id
+    with pytest.raises(ValueError, match="不属于该会话"):
+        get_pending_memory_replacement_proposal(
+            database_path,
+            "user_001",
+            "session_B",
+            proposal.proposal_id,
+        )
+
+
+def test_confirm_replacement_proposal_replaces_memory_atomically(tmp_path):
+    database_path = tmp_path / "memories.db"
+    old_memory = add_memory(
+        database_path,
+        MemoryCreate(
+            user_id="user_001",
+            source_session_id="session_A",
+            memory_type="decision",
+            content="项目使用 SQLite。",
+            source="manual",
+        ),
+    )
+    proposal = add_memory_replacement_proposal(
+        database_path,
+        MemoryReplacementProposalCreate(
+            user_id="user_001",
+            session_id="session_A",
+            old_memory_id=old_memory.memory_id,
+            old_content_snapshot=old_memory.content,
+            memory_type="decision",
+            new_content="项目使用 PostgreSQL。",
+            source="model_inferred",
+        ),
+    )
+
+    confirmation = confirm_memory_replacement_proposal(
+        database_path,
+        "user_001",
+        "session_A",
+        proposal.proposal_id,
+    )
+
+    assert confirmation.proposal.status == "confirmed"
+    assert confirmation.old_memory.status == "superseded"
+    assert (
+        confirmation.old_memory.superseded_by
+        == confirmation.new_memory.memory_id
+    )
+    assert confirmation.new_memory.content == "项目使用 PostgreSQL。"
+    assert [memory.memory_id for memory in get_user_memories(
+        database_path,
+        "user_001",
+    )] == [confirmation.new_memory.memory_id]
+
+
+def test_confirm_replacement_proposal_expires_if_old_memory_changed(tmp_path):
+    database_path = tmp_path / "memories.db"
+    old_memory = add_memory(
+        database_path,
+        MemoryCreate(
+            user_id="user_001",
+            source_session_id="session_A",
+            memory_type="decision",
+            content="项目使用 SQLite。",
+            source="manual",
+        ),
+    )
+    proposal = add_memory_replacement_proposal(
+        database_path,
+        MemoryReplacementProposalCreate(
+            user_id="user_001",
+            session_id="session_A",
+            old_memory_id=old_memory.memory_id,
+            old_content_snapshot=old_memory.content,
+            memory_type="decision",
+            new_content="项目使用 PostgreSQL。",
+            source="model_inferred",
+        ),
+    )
+    replace_memory(
+        database_path,
+        "user_001",
+        old_memory.memory_id,
+        MemoryCreate(
+            user_id="user_001",
+            source_session_id="session_B",
+            memory_type="decision",
+            content="项目使用 MySQL。",
+            source="manual",
+        ),
+    )
+
+    with pytest.raises(ValueError, match="已过期"):
+        confirm_memory_replacement_proposal(
+            database_path,
+            "user_001",
+            "session_A",
+            proposal.proposal_id,
+        )
+
+    connection = sqlite3.connect(database_path)
+    status = connection.execute(
+        "SELECT status FROM memory_replacement_proposals WHERE proposal_id = ?",
+        (proposal.proposal_id,),
+    ).fetchone()[0]
+    connection.close()
+
+    assert status == "expired"
+    assert [memory.content for memory in get_user_memories(
+        database_path,
+        "user_001",
+    )] == ["项目使用 MySQL。"]
+
+
+def test_cancel_replacement_proposal_keeps_old_memory_active(tmp_path):
+    database_path = tmp_path / "memories.db"
+    old_memory = add_memory(
+        database_path,
+        MemoryCreate(
+            user_id="user_001",
+            source_session_id="session_A",
+            memory_type="decision",
+            content="项目使用 SQLite。",
+            source="manual",
+        ),
+    )
+    proposal = add_memory_replacement_proposal(
+        database_path,
+        MemoryReplacementProposalCreate(
+            user_id="user_001",
+            session_id="session_A",
+            old_memory_id=old_memory.memory_id,
+            old_content_snapshot=old_memory.content,
+            memory_type="decision",
+            new_content="项目使用 PostgreSQL。",
+            source="model_inferred",
+        ),
+    )
+
+    cancelled = cancel_memory_replacement_proposal(
+        database_path,
+        "user_001",
+        "session_A",
+        proposal.proposal_id,
+    )
+
+    assert cancelled.status == "cancelled"
+    assert [memory.memory_id for memory in get_user_memories(
+        database_path,
+        "user_001",
+    )] == [old_memory.memory_id]
+    with pytest.raises(ValueError, match="不再是 pending"):
+        get_pending_memory_replacement_proposal(
+            database_path,
+            "user_001",
+            "session_A",
+            proposal.proposal_id,
+        )

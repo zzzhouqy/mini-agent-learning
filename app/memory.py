@@ -73,6 +73,53 @@ class MemoryRecord(MemoryCreate):
     updated_at: str = Field(min_length=1)
 
 
+class MemoryReplacementProposalCreate(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        strict=True,
+    )
+
+    user_id: str = Field(min_length=1)
+    session_id: str = Field(min_length=1)
+    old_memory_id: int = Field(ge=1)
+    old_content_snapshot: str = Field(min_length=1)
+    memory_type: Literal[
+        "preference",
+        "fact",
+        "decision",
+    ]
+    new_content: str = Field(min_length=1)
+    source: Literal[
+        "user_explicit",
+        "model_inferred",
+    ]
+
+
+class MemoryReplacementProposalRecord(
+    MemoryReplacementProposalCreate,
+):
+    proposal_id: int = Field(ge=1)
+    status: Literal[
+        "pending",
+        "confirmed",
+        "cancelled",
+        "expired",
+    ] = "pending"
+    created_at: str = Field(min_length=1)
+    updated_at: str = Field(min_length=1)
+
+
+class MemoryReplacementConfirmation(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        strict=True,
+    )
+
+    proposal: MemoryReplacementProposalRecord
+    old_memory: MemoryRecord
+    new_memory: MemoryRecord
+
+
 class MemoryMatch(BaseModel):
     memory: MemoryRecord
     score: float = Field(ge=-1.0, le=1.0)
