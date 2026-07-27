@@ -3,6 +3,7 @@ from typing import Literal
 
 from app.agent import send_messages
 from app.config import LLMConfig
+from app.embeddings import semantic_scores
 from app.memory import (
     MemoryCandidate,
     MemoryCreate,
@@ -29,6 +30,8 @@ SENSITIVE_MEMORY_MARKERS = (
     "sk-",
 )
 
+
+SEMANTIC_DUPLICATE_MIN_SCORE = 0.90
 
 MEMORY_EXTRACTION_SYSTEM_PROMPT = """
 你负责从一次完整问答中提取值得长期保存的信息。
@@ -131,6 +134,41 @@ def find_duplicate_memory(
     return None
 
 
+def find_semantic_duplicate_memory(
+    database_path: str | Path,
+    memory: MemoryCreate,
+    min_score: float = SEMANTIC_DUPLICATE_MIN_SCORE,
+) -> MemoryRecord | None:
+    same_type_memories = [
+        existing_memory
+        for existing_memory in get_user_memories(
+            database_path,
+            memory.user_id,
+        )
+        if existing_memory.memory_type == memory.memory_type
+    ]
+
+    if not same_type_memories:
+        return None
+
+    scores = semantic_scores(
+        memory.content,
+        [
+            existing_memory.content
+            for existing_memory in same_type_memories
+        ],
+    )
+    best_memory, best_score = max(
+        zip(same_type_memories, scores),
+        key=lambda item: item[1],
+    )
+
+    if best_score >= min_score:
+        return best_memory
+
+    return None
+
+
 def parse_memory_extraction_response(
     response_text: str,
 ) -> list[MemoryCandidate]:
@@ -225,6 +263,14 @@ def save_memory_candidate(
 
     if duplicate is not None:
         return duplicate
+
+    semantic_duplicate = find_semantic_duplicate_memory(
+        database_path,
+        memory,
+    )
+
+    if semantic_duplicate is not None:
+        return semantic_duplicate
 
     return add_memory(database_path, memory)
 

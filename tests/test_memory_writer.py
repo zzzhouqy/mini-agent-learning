@@ -341,3 +341,119 @@ def test_save_memory_candidates_reuses_safe_single_writer(tmp_path):
         "用户喜欢用表格总结。",
         "项目继续使用 SQLite。",
     ]
+
+
+def test_save_memory_candidate_reuses_high_score_semantic_duplicate(
+    tmp_path,
+    monkeypatch,
+):
+    database_path = tmp_path / "memories.db"
+    original = save_memory_candidate(
+        database_path,
+        "user_001",
+        "session_A",
+        MemoryCandidate(
+            memory_type="decision",
+            content="项目决定继续使用 SQLite 作为本地持久化方案。",
+            source="model_inferred",
+        ),
+    )
+    monkeypatch.setattr(
+        memory_writer,
+        "semantic_scores",
+        lambda query, texts: [0.93],
+    )
+
+    duplicate = save_memory_candidate(
+        database_path,
+        "user_001",
+        "session_B",
+        MemoryCandidate(
+            memory_type="decision",
+            content="使用SQLite作为项目的本地持久化方案",
+            source="model_inferred",
+        ),
+    )
+
+    assert original is not None
+    assert duplicate is not None
+    assert duplicate.memory_id == original.memory_id
+    assert len(get_user_memories(database_path, "user_001")) == 1
+
+
+def test_save_memory_candidate_keeps_lower_score_decision_as_new_record(
+    tmp_path,
+    monkeypatch,
+):
+    database_path = tmp_path / "memories.db"
+    original = save_memory_candidate(
+        database_path,
+        "user_001",
+        "session_A",
+        MemoryCandidate(
+            memory_type="decision",
+            content="项目决定继续使用 SQLite 作为本地持久化方案。",
+            source="model_inferred",
+        ),
+    )
+    monkeypatch.setattr(
+        memory_writer,
+        "semantic_scores",
+        lambda query, texts: [0.54],
+    )
+
+    new_record = save_memory_candidate(
+        database_path,
+        "user_001",
+        "session_B",
+        MemoryCandidate(
+            memory_type="decision",
+            content="项目决定迁移到 PostgreSQL。",
+            source="model_inferred",
+        ),
+    )
+
+    assert original is not None
+    assert new_record is not None
+    assert new_record.memory_id != original.memory_id
+    assert len(get_user_memories(database_path, "user_001")) == 2
+
+
+def test_semantic_duplicate_search_skips_embedding_without_same_type_memory(
+    tmp_path,
+    monkeypatch,
+):
+    database_path = tmp_path / "memories.db"
+    save_memory_candidate(
+        database_path,
+        "user_001",
+        "session_A",
+        MemoryCandidate(
+            memory_type="preference",
+            content="用户喜欢用表格总结。",
+            source="model_inferred",
+        ),
+    )
+
+    def fail_if_embedding_called(query, texts):
+        raise AssertionError("没有同类型记忆时不应调用 Embedding")
+
+    monkeypatch.setattr(
+        memory_writer,
+        "semantic_scores",
+        fail_if_embedding_called,
+    )
+
+    record = save_memory_candidate(
+        database_path,
+        "user_001",
+        "session_B",
+        MemoryCandidate(
+            memory_type="decision",
+            content="项目继续使用 SQLite。",
+            source="model_inferred",
+        ),
+    )
+
+    assert record is not None
+    assert len(get_user_memories(database_path, "user_001")) == 2
