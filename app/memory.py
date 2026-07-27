@@ -67,6 +67,8 @@ class MemoryCreate(BaseModel):
 
 class MemoryRecord(MemoryCreate):
     memory_id: int = Field(ge=1)
+    status: Literal["active", "superseded"] = "active"
+    superseded_by: int | None = Field(default=None, ge=1)
     created_at: str = Field(min_length=1)
     updated_at: str = Field(min_length=1)
 
