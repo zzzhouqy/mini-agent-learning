@@ -120,6 +120,19 @@ class MemoryReplacementConfirmation(BaseModel):
     new_memory: MemoryRecord
 
 
+class MemoryRelationshipResult(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        strict=True,
+    )
+
+    relationship: Literal[
+        "conflict",
+        "supplement",
+        "unrelated",
+    ]
+
+
 class MemoryMatch(BaseModel):
     memory: MemoryRecord
     score: float = Field(ge=-1.0, le=1.0)

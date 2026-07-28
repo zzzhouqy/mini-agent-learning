@@ -2,7 +2,7 @@ import pytest
 from pydantic import ValidationError
 
 import app.memory_writer as memory_writer
-from app.memory import MemoryCandidate
+from app.memory import MemoryCandidate, MemoryRelationshipResult
 from app.memory_store import get_user_memories
 from app.memory_writer import (
     build_explicit_memory_candidate,
@@ -14,6 +14,7 @@ from app.memory_writer import (
     parse_memory_extraction_response,
     save_memory_candidate,
     save_memory_candidates,
+    save_inferred_memory_candidate,
     save_explicit_memory,
 )
 
@@ -457,3 +458,156 @@ def test_semantic_duplicate_search_skips_embedding_without_same_type_memory(
 
     assert record is not None
     assert len(get_user_memories(database_path, "user_001")) == 2
+
+
+def test_save_inferred_memory_candidate_creates_pending_conflict_proposal(
+    tmp_path,
+    monkeypatch,
+):
+    database_path = tmp_path / "memories.db"
+    old_record = save_memory_candidate(
+        database_path,
+        "user_001",
+        "session_A",
+        MemoryCandidate(
+            memory_type="decision",
+            content="项目继续使用 SQLite。",
+            source="model_inferred",
+        ),
+    )
+    monkeypatch.setattr(
+        memory_writer,
+        "semantic_scores",
+        lambda query, texts: [0.54],
+    )
+    monkeypatch.setattr(
+        memory_writer,
+        "classify_memory_relationship",
+        lambda existing, candidate, config: MemoryRelationshipResult(
+            relationship="conflict",
+        ),
+    )
+
+    result = save_inferred_memory_candidate(
+        database_path,
+        "user_001",
+        "session_B",
+        MemoryCandidate(
+            memory_type="decision",
+            content="项目决定迁移到 PostgreSQL。",
+            source="model_inferred",
+        ),
+        config=None,
+    )
+    memories = get_user_memories(
+        database_path,
+        "user_001",
+        include_superseded=True,
+    )
+
+    assert old_record is not None
+    assert result is not None
+    assert result.status == "pending"
+    assert result.old_memory_id == old_record.memory_id
+    assert result.new_content == "项目决定迁移到 PostgreSQL。"
+    assert [(memory.memory_id, memory.status) for memory in memories] == [
+        (old_record.memory_id, "active"),
+    ]
+
+
+@pytest.mark.parametrize("relationship", ["supplement", "unrelated"])
+def test_save_inferred_memory_candidate_saves_non_conflicting_memory(
+    tmp_path,
+    monkeypatch,
+    relationship,
+):
+    database_path = tmp_path / "memories.db"
+    old_record = save_memory_candidate(
+        database_path,
+        "user_001",
+        "session_A",
+        MemoryCandidate(
+            memory_type="decision",
+            content="项目继续使用 SQLite。",
+            source="model_inferred",
+        ),
+    )
+    monkeypatch.setattr(
+        memory_writer,
+        "semantic_scores",
+        lambda query, texts: [0.54],
+    )
+    monkeypatch.setattr(
+        memory_writer,
+        "classify_memory_relationship",
+        lambda existing, candidate, config: MemoryRelationshipResult(
+            relationship=relationship,
+        ),
+    )
+
+    result = save_inferred_memory_candidate(
+        database_path,
+        "user_001",
+        "session_B",
+        MemoryCandidate(
+            memory_type="decision",
+            content="项目已启用每日数据库备份。",
+            source="model_inferred",
+        ),
+        config=None,
+    )
+
+    assert old_record is not None
+    assert result is not None
+    assert result.content == "项目已启用每日数据库备份。"
+    assert [memory.content for memory in get_user_memories(
+        database_path,
+        "user_001",
+    )] == [
+        "项目继续使用 SQLite。",
+        "项目已启用每日数据库备份。",
+    ]
+
+
+def test_save_inferred_memory_candidate_skips_classifier_below_threshold(
+    tmp_path,
+    monkeypatch,
+):
+    database_path = tmp_path / "memories.db"
+    save_memory_candidate(
+        database_path,
+        "user_001",
+        "session_A",
+        MemoryCandidate(
+            memory_type="decision",
+            content="项目继续使用 SQLite。",
+            source="model_inferred",
+        ),
+    )
+    monkeypatch.setattr(
+        memory_writer,
+        "semantic_scores",
+        lambda query, texts: [0.29],
+    )
+    monkeypatch.setattr(
+        memory_writer,
+        "classify_memory_relationship",
+        lambda existing, candidate, config: (_ for _ in ()).throw(
+            AssertionError("低相似度记忆不应调用关系模型"),
+        ),
+    )
+
+    result = save_inferred_memory_candidate(
+        database_path,
+        "user_001",
+        "session_B",
+        MemoryCandidate(
+            memory_type="decision",
+            content="用户喜欢用表格总结学习内容。",
+            source="model_inferred",
+        ),
+        config=None,
+    )
+
+    assert result is not None
+    assert result.content == "用户喜欢用表格总结学习内容。"
