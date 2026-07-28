@@ -494,6 +494,42 @@ def test_add_replacement_proposal_reuses_same_pending_proposal_in_session(
     assert proposal_count == 2
 
 
+def test_add_replacement_proposal_rejects_stale_pending_proposal(
+    tmp_path,
+):
+    database_path = tmp_path / "memories.db"
+    old_memory = add_memory(
+        database_path,
+        MemoryCreate(
+            user_id="user_001",
+            source_session_id="session_A",
+            memory_type="decision",
+            content="项目使用 SQLite。",
+            source="manual",
+        ),
+    )
+    proposal = MemoryReplacementProposalCreate(
+        user_id="user_001",
+        session_id="session_A",
+        old_memory_id=old_memory.memory_id,
+        old_content_snapshot=old_memory.content,
+        memory_type="decision",
+        new_content="项目使用 PostgreSQL。",
+        source="model_inferred",
+    )
+    add_memory_replacement_proposal(database_path, proposal)
+    connection = sqlite3.connect(database_path)
+    connection.execute(
+        "UPDATE memories SET status = 'superseded' WHERE memory_id = ?",
+        (old_memory.memory_id,),
+    )
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(ValueError, match="不是 active"):
+        add_memory_replacement_proposal(database_path, proposal)
+
+
 def test_pending_replacement_proposal_unique_index_rejects_duplicate(
     tmp_path,
 ):

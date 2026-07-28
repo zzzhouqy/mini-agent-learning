@@ -294,8 +294,6 @@ def add_memory_replacement_proposal(
                     proposal.user_id,
                 ),
             ).fetchone()
-            existing_pending_row = find_existing_pending_row()
-
             if old_row is None:
                 raise ValueError("旧记忆不存在，或不属于该用户。")
 
@@ -309,6 +307,8 @@ def add_memory_replacement_proposal(
                 raise ValueError(
                     "旧记忆内容已变更，请重新创建替换提案。"
                 )
+
+            existing_pending_row = find_existing_pending_row()
 
             if existing_pending_row is not None:
                 return MemoryReplacementProposalRecord.model_validate(
