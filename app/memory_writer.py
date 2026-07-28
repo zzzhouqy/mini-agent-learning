@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 from typing import Literal
 
@@ -20,7 +21,7 @@ from app.memory_store import (
     get_user_memories,
 )
 
-
+LOGGER = logging.getLogger(__name__)
 EXPLICIT_MEMORY_PREFIXES = (
     "请记住：",
     "请记住:",
@@ -448,13 +449,17 @@ def save_inferred_memory_candidates(
     results = []
 
     for candidate in candidates:
-        result = save_inferred_memory_candidate(
-            database_path,
-            user_id,
-            session_id,
-            candidate,
-            config,
-        )
+        try:
+            result = save_inferred_memory_candidate(
+                database_path,
+                user_id,
+                session_id,
+                candidate,
+                config,
+            )
+        except Exception:
+            LOGGER.exception("自动长期记忆候选写入失败。")
+            continue
 
         if result is not None:
             results.append(result)

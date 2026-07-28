@@ -229,7 +229,41 @@ def add_memory_replacement_proposal(
                 raise ValueError(
                     "旧记忆内容已变更，请重新创建替换提案。"
                 )
+            existing_pending_row = connection.execute(
+                """
+                SELECT
+                    proposal_id,
+                    user_id,
+                    session_id,
+                    old_memory_id,
+                    old_content_snapshot,
+                    memory_type,
+                    new_content,
+                    source,
+                    status,
+                    created_at,
+                    updated_at
+                FROM memory_replacement_proposals
+                WHERE user_id = ?
+                  AND session_id = ?
+                  AND old_memory_id = ?
+                  AND new_content = ?
+                  AND status = 'pending'
+                ORDER BY proposal_id
+                LIMIT 1
+                """,
+                (
+                    proposal.user_id,
+                    proposal.session_id,
+                    proposal.old_memory_id,
+                    proposal.new_content,
+                ),
+            ).fetchone()
 
+            if existing_pending_row is not None:
+                return MemoryReplacementProposalRecord.model_validate(
+                    dict(existing_pending_row)
+                )
             cursor = connection.execute(
                 """
                 INSERT INTO memory_replacement_proposals (

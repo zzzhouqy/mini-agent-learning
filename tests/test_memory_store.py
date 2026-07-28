@@ -445,6 +445,55 @@ def test_pending_replacement_proposal_is_scoped_to_user_and_session(tmp_path):
         )
 
 
+def test_add_replacement_proposal_reuses_same_pending_proposal_in_session(
+    tmp_path,
+):
+    database_path = tmp_path / "memories.db"
+    old_memory = add_memory(
+        database_path,
+        MemoryCreate(
+            user_id="user_001",
+            source_session_id="session_A",
+            memory_type="decision",
+            content="项目使用 SQLite。",
+            source="manual",
+        ),
+    )
+
+    def create_proposal(session_id):
+        return MemoryReplacementProposalCreate(
+            user_id="user_001",
+            session_id=session_id,
+            old_memory_id=old_memory.memory_id,
+            old_content_snapshot=old_memory.content,
+            memory_type="decision",
+            new_content="项目使用 PostgreSQL。",
+            source="model_inferred",
+        )
+
+    first = add_memory_replacement_proposal(
+        database_path,
+        create_proposal("session_A"),
+    )
+    repeated = add_memory_replacement_proposal(
+        database_path,
+        create_proposal("session_A"),
+    )
+    other_session = add_memory_replacement_proposal(
+        database_path,
+        create_proposal("session_B"),
+    )
+
+    assert repeated.proposal_id == first.proposal_id
+    assert other_session.proposal_id != first.proposal_id
+    connection = sqlite3.connect(database_path)
+    proposal_count = connection.execute(
+        "SELECT COUNT(*) FROM memory_replacement_proposals"
+    ).fetchone()[0]
+    connection.close()
+    assert proposal_count == 2
+
+
 def test_confirm_replacement_proposal_replaces_memory_atomically(tmp_path):
     database_path = tmp_path / "memories.db"
     old_memory = add_memory(

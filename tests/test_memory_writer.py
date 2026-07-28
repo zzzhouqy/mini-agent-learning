@@ -15,6 +15,7 @@ from app.memory_writer import (
     save_memory_candidate,
     save_memory_candidates,
     save_inferred_memory_candidate,
+    save_inferred_memory_candidates,
     save_explicit_memory,
 )
 
@@ -611,3 +612,55 @@ def test_save_inferred_memory_candidate_skips_classifier_below_threshold(
 
     assert result is not None
     assert result.content == "用户喜欢用表格总结学习内容。"
+
+
+def test_save_inferred_memory_candidates_isolates_one_failed_candidate(
+    tmp_path,
+    monkeypatch,
+):
+    database_path = tmp_path / "memories.db"
+    original_save = memory_writer.save_inferred_memory_candidate
+
+    def fail_only_middle_candidate(*args, **kwargs):
+        candidate = args[3]
+
+        if candidate.content == "B":
+            raise ValueError("关系模型返回非法 JSON")
+
+        return original_save(*args, **kwargs)
+
+    monkeypatch.setattr(
+        memory_writer,
+        "save_inferred_memory_candidate",
+        fail_only_middle_candidate,
+    )
+
+    results = save_inferred_memory_candidates(
+        database_path,
+        "user_001",
+        "session_A",
+        [
+            MemoryCandidate(
+                memory_type="preference",
+                content="A",
+                source="model_inferred",
+            ),
+            MemoryCandidate(
+                memory_type="decision",
+                content="B",
+                source="model_inferred",
+            ),
+            MemoryCandidate(
+                memory_type="fact",
+                content="C",
+                source="model_inferred",
+            ),
+        ],
+        config=None,
+    )
+
+    assert [result.content for result in results] == ["A", "C"]
+    assert [memory.content for memory in get_user_memories(
+        database_path,
+        "user_001",
+    )] == ["A", "C"]
