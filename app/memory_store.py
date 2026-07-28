@@ -127,6 +127,53 @@ def initialize_memory_database(
                 )
                 """
             )
+            duplicate_pending_row = connection.execute(
+                """
+                SELECT
+                    user_id,
+                    session_id,
+                    old_memory_id,
+                    COUNT(*) AS duplicate_count
+                FROM memory_replacement_proposals
+                WHERE status = 'pending'
+                GROUP BY
+                    user_id,
+                    session_id,
+                    old_memory_id,
+                    new_content
+                HAVING COUNT(*) > 1
+                LIMIT 1
+                """
+            ).fetchone()
+
+            if duplicate_pending_row is not None:
+                (
+                    user_id,
+                    session_id,
+                    old_memory_id,
+                    duplicate_count,
+                ) = duplicate_pending_row
+                raise ValueError(
+                    "检测到重复的 pending 替换提案，"
+                    "请先完成审计与人工处理："
+                    f"user_id={user_id}, "
+                    f"session_id={session_id}, "
+                    f"old_memory_id={old_memory_id}, "
+                    f"count={duplicate_count}。"
+                )
+            connection.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS
+                    unique_pending_memory_replacement_proposals
+                ON memory_replacement_proposals (
+                    user_id,
+                    session_id,
+                    old_memory_id,
+                    new_content
+                )
+                WHERE status = 'pending'
+                """
+            )
     finally:
         connection.close()
 
@@ -197,6 +244,38 @@ def add_memory_replacement_proposal(
     connection = sqlite3.connect(database_path)
     connection.row_factory = sqlite3.Row
 
+    def find_existing_pending_row() -> sqlite3.Row | None:
+        return connection.execute(
+            """
+            SELECT
+                proposal_id,
+                user_id,
+                session_id,
+                old_memory_id,
+                old_content_snapshot,
+                memory_type,
+                new_content,
+                source,
+                status,
+                created_at,
+                updated_at
+            FROM memory_replacement_proposals
+            WHERE user_id = ?
+              AND session_id = ?
+              AND old_memory_id = ?
+              AND new_content = ?
+              AND status = 'pending'
+            ORDER BY proposal_id
+            LIMIT 1
+            """,
+            (
+                proposal.user_id,
+                proposal.session_id,
+                proposal.old_memory_id,
+                proposal.new_content,
+            ),
+        ).fetchone()
+
     try:
         with connection:
             old_row = connection.execute(
@@ -215,6 +294,7 @@ def add_memory_replacement_proposal(
                     proposal.user_id,
                 ),
             ).fetchone()
+            existing_pending_row = find_existing_pending_row()
 
             if old_row is None:
                 raise ValueError("旧记忆不存在，或不属于该用户。")
@@ -229,64 +309,44 @@ def add_memory_replacement_proposal(
                 raise ValueError(
                     "旧记忆内容已变更，请重新创建替换提案。"
                 )
-            existing_pending_row = connection.execute(
-                """
-                SELECT
-                    proposal_id,
-                    user_id,
-                    session_id,
-                    old_memory_id,
-                    old_content_snapshot,
-                    memory_type,
-                    new_content,
-                    source,
-                    status,
-                    created_at,
-                    updated_at
-                FROM memory_replacement_proposals
-                WHERE user_id = ?
-                  AND session_id = ?
-                  AND old_memory_id = ?
-                  AND new_content = ?
-                  AND status = 'pending'
-                ORDER BY proposal_id
-                LIMIT 1
-                """,
-                (
-                    proposal.user_id,
-                    proposal.session_id,
-                    proposal.old_memory_id,
-                    proposal.new_content,
-                ),
-            ).fetchone()
 
             if existing_pending_row is not None:
                 return MemoryReplacementProposalRecord.model_validate(
                     dict(existing_pending_row)
                 )
-            cursor = connection.execute(
-                """
-                INSERT INTO memory_replacement_proposals (
-                    user_id,
-                    session_id,
-                    old_memory_id,
-                    old_content_snapshot,
-                    memory_type,
-                    new_content,
-                    source
+
+            try:
+                cursor = connection.execute(
+                    """
+                    INSERT INTO memory_replacement_proposals (
+                        user_id,
+                        session_id,
+                        old_memory_id,
+                        old_content_snapshot,
+                        memory_type,
+                        new_content,
+                        source
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        proposal.user_id,
+                        proposal.session_id,
+                        proposal.old_memory_id,
+                        proposal.old_content_snapshot,
+                        proposal.memory_type,
+                        proposal.new_content,
+                        proposal.source,
+                    ),
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    proposal.user_id,
-                    proposal.session_id,
-                    proposal.old_memory_id,
-                    proposal.old_content_snapshot,
-                    proposal.memory_type,
-                    proposal.new_content,
-                    proposal.source,
-                ),
-            )
+            except sqlite3.IntegrityError:
+                existing_pending_row = find_existing_pending_row()
+                if existing_pending_row is None:
+                    raise
+
+                return MemoryReplacementProposalRecord.model_validate(
+                    dict(existing_pending_row)
+                )
             row = connection.execute(
                 """
                 SELECT
@@ -313,7 +373,6 @@ def add_memory_replacement_proposal(
         raise RuntimeError("替换提案写入后无法读取。")
 
     return MemoryReplacementProposalRecord.model_validate(dict(row))
-
 
 def get_pending_memory_replacement_proposal(
     database_path: str | Path,

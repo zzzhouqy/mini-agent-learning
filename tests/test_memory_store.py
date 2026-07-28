@@ -494,6 +494,110 @@ def test_add_replacement_proposal_reuses_same_pending_proposal_in_session(
     assert proposal_count == 2
 
 
+def test_pending_replacement_proposal_unique_index_rejects_duplicate(
+    tmp_path,
+):
+    database_path = tmp_path / "memories.db"
+    initialize_memory_database(database_path)
+    values = (
+        "user_001",
+        "session_A",
+        1,
+        "项目使用 SQLite。",
+        "decision",
+        "项目使用 PostgreSQL。",
+        "model_inferred",
+    )
+    connection = sqlite3.connect(database_path)
+    connection.execute(
+        """
+        INSERT INTO memory_replacement_proposals (
+            user_id,
+            session_id,
+            old_memory_id,
+            old_content_snapshot,
+            memory_type,
+            new_content,
+            source
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        values,
+    )
+
+    with pytest.raises(sqlite3.IntegrityError):
+        connection.execute(
+            """
+            INSERT INTO memory_replacement_proposals (
+                user_id,
+                session_id,
+                old_memory_id,
+                old_content_snapshot,
+                memory_type,
+                new_content,
+                source
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            values,
+        )
+
+    connection.close()
+
+
+def test_initialize_memory_database_requires_audit_for_legacy_duplicates(
+    tmp_path,
+):
+    database_path = tmp_path / "legacy_memories.db"
+    connection = sqlite3.connect(database_path)
+    connection.execute(
+        """
+        CREATE TABLE memory_replacement_proposals (
+            proposal_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            old_memory_id INTEGER NOT NULL,
+            old_content_snapshot TEXT NOT NULL,
+            memory_type TEXT NOT NULL,
+            new_content TEXT NOT NULL,
+            source TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    values = (
+        "user_001",
+        "session_A",
+        1,
+        "项目使用 SQLite。",
+        "decision",
+        "项目使用 PostgreSQL。",
+        "model_inferred",
+    )
+    connection.executemany(
+        """
+        INSERT INTO memory_replacement_proposals (
+            user_id,
+            session_id,
+            old_memory_id,
+            old_content_snapshot,
+            memory_type,
+            new_content,
+            source
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        [values, values],
+    )
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(ValueError, match="检测到重复的 pending"):
+        initialize_memory_database(database_path)
+
+
 def test_confirm_replacement_proposal_replaces_memory_atomically(tmp_path):
     database_path = tmp_path / "memories.db"
     old_memory = add_memory(
